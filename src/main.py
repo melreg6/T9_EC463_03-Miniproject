@@ -9,7 +9,9 @@ import math
 
 # --- Pin Configuration ---
 photo_sensor_pin = machine.ADC(28)          # light sensor
+photo_sensor_pin_player2 = machine.ADC(26)
 buzzer_pin       = machine.PWM(machine.Pin(16))  # buzzer
+buzzer_pin_player2 = machine.PWM(machine.Pin(17))
 
 # RGB LED pins (PWM)
 led_red   = machine.PWM(machine.Pin(12))
@@ -22,6 +24,8 @@ for led in (led_red, led_green, led_blue):
 def stop_tone():
     buzzer_pin.duty_u16(0)
     buzzer_pin.deinit()
+    buzzer_pin_player2.duty_u16(0)
+    buzzer_pin_player2.deinit()
     for led in (led_red, led_green, led_blue):
         led.duty_u16(0)
 
@@ -110,6 +114,7 @@ async def main():
 
     while True:
         adc = photo_sensor_pin.read_u16()
+        adc2 = photo_sensor_pin_player2.read_u16()
 
         # LED twinkle always running
         twinkle_pattern(adc)
@@ -133,6 +138,11 @@ async def main():
             frequency = lux_to_freq(adc, min_light, max_light)
             buzzer_pin.freq(int(frequency))
             buzzer_pin.duty_u16(32768)
+
+            frequency2 = lux_to_freq(adc2, min_light, max_light)
+            buzzer_pin_player2.freq(int(frequency2))
+            buzzer_pin_player2.duty_u16(32768)
+
 
         await asyncio.sleep(0.05)
 
