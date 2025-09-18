@@ -21,8 +21,9 @@ def stop_tone():
     buzzer_pin.deinit()      # release the PWM hardware
 
 # --- Wii-on-bright ---
-BRIGHT_ON  = 52000   # start melody when reading crosses above this
-BRIGHT_OFF = 50000   # re-arm when reading falls below this (hysteresis)
+TOP_PEAK_ADC = 40000       # observed max
+PEAK_MARGIN  = 120         # accept >= (max - margin) as "brightest"
+REARM_BELOW  = 32000       # must fall below this to re-arm
 
 BPM = 112
 BEAT_SEC = 60.0 / BPM
@@ -30,15 +31,31 @@ BEAT_SEC = 60.0 / BPM
 # Opening phrase of the Mii Channel theme (lead line)
 # (MIDI note or None for rest, beats)
 WII_MELODY = [
-    (81,0.5),(81,0.5),(78,0.5),(78,0.5),(74,0.5),(74,0.5),(76,0.5),(78,1.0),
-    (73,0.5),(74,0.5),(76,0.5),(78,0.5),(81,1.0),(None,0.5),
-    (80,0.5),(81,0.5),(85,1.0),(88,1.5),(87,0.5),(86,0.5),(85,0.5),
+    (74,0.5),  # D5
+    (78,0.5),  # F#5
+    (85,0.5),  # C#6
+    (78,0.5),  # F#5
+    (78,0.5),  # F#5
+    (74,0.5),  # D5
+    (74,0.5),  # D5
+    (74,0.5),  # D5
+    (73,0.5),  # C#5
+    (74,0.5),  # D5
+    (78,0.5),  # F#5
+    (81,0.5),  # A5
+    (85,0.5),  # C#6
+    (81,0.5),  # A5
+    (78,0.5),  # F#5
+    (88,0.5),  # E6
+    (87,0.5),  # D#6
+    (86,0.5),  # D6
 ]
 
 # one-shot control
 _wii_playing = False   # True while the one-shot melody is running
-_wii_armed   = True    # re-armed after brightness falls below BRIGHT_OFF
+_wii_armed   = True    # re-armed after brightness falls below REARM_BELOW
 _wii_task    = None
+_was_topbin  = False   # rising-edge detector for the top bin
 
 
 C_MAJOR_MIDI = [
@@ -96,28 +113,33 @@ async def main():
 
     while True:
         try:
-            light_value = photo_sensor_pin.read_u16()
+            adc = photo_sensor_pin.read_u16()
 
-            # start the melody ONCE
-            if _wii_armed and not _wii_playing and light_value >= BRIGHT_ON:
-                _wii_armed = False          # disarm until brightness falls
+            # --- Peak bin detection (rising edge only) ---
+            is_topbin = (adc >= (TOP_PEAK_ADC - PEAK_MARGIN))
+
+            # Trigger ONCE when we ENTER the top bin (rising edge)
+            if _wii_armed and not _wii_playing and (not _was_topbin) and is_topbin:
+                _wii_armed = False          # disarm until we drop below REARM_BELOW
                 _wii_playing = True         # claim the buzzer immediately
                 buzzer_pin.duty_u16(0)      # hard mute any scale tone
-                print(f"[Wii] Triggered (ADC={light_value}) → one-shot melody")
+                print(f"[Wii] Peak trigger at ADC={adc} (≥ {TOP_PEAK_ADC - PEAK_MARGIN})")
                 _wii_task = asyncio.create_task(play_wii_melody_once())
 
-            # Re-arm ONLY after brightness drops below BRIGHT_OFF
-            if not _wii_armed and not _wii_playing and light_value <= BRIGHT_OFF:
+            # Re-arm ONLY after we leave bright territory by enough margin
+            if (not _wii_armed) and (not _wii_playing) and adc <= REARM_BELOW:
                 _wii_armed = True
-                print(f"[Wii] Re-armed (ADC={light_value})")
-            # ------------------------------------------------------
+                print(f"[Wii] Re-armed (ADC={adc} ≤ {REARM_BELOW})")
+
+            # Update edge detector
+            _was_topbin = is_topbin
 
             # While the melody plays, DO NOT play the C-major scale
             if not _wii_playing:
-                frequency = lux_to_freq(light_value, min_light, max_light)
+                frequency = lux_to_freq(adc, min_light, max_light)
                 buzzer_pin.freq(int(frequency))
                 buzzer_pin.duty_u16(32768)
-                # print(f"[Scale] ADC={light_value} -> {int(frequency)} Hz")
+                # print(f"[Scale] ADC={adc} -> {int(frequency)} Hz")
 
             await asyncio.sleep(0.05)
 
