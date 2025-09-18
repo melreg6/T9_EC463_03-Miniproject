@@ -20,6 +20,27 @@ def stop_tone():
     buzzer_pin.duty_u16(0)   # duty cycle = 0% (silent)
     buzzer_pin.deinit()      # release the PWM hardware
 
+# --- Wii-on-bright ---
+BRIGHT_ON  = 52000   # start melody when reading crosses above this
+BRIGHT_OFF = 50000   # re-arm when reading falls below this (hysteresis)
+
+BPM = 112
+BEAT_SEC = 60.0 / BPM
+
+# Opening phrase of the Mii Channel theme (lead line)
+# (MIDI note or None for rest, beats)
+WII_MELODY = [
+    (81,0.5),(81,0.5),(78,0.5),(78,0.5),(74,0.5),(74,0.5),(76,0.5),(78,1.0),
+    (73,0.5),(74,0.5),(76,0.5),(78,0.5),(81,1.0),(None,0.5),
+    (80,0.5),(81,0.5),(85,1.0),(88,1.5),(87,0.5),(86,0.5),(85,0.5),
+]
+
+# one-shot control
+_wii_playing = False   # True while the one-shot melody is running
+_wii_armed   = True    # re-armed after brightness falls below BRIGHT_OFF
+_wii_task    = None
+
+
 C_MAJOR_MIDI = [
     48, 50, 52, 53, 55, 57, 59,   # C3..B3
     60, 62, 64, 65, 67, 69, 71,   # C4..B4
@@ -48,22 +69,57 @@ def lux_to_freq(x,theMin, theMax, use_log=True):
     midi_note = C_MAJOR_MIDI[idx]
     return midi_to_freq(midi_note)
 
+# --- Non-blocking Wii melody task (NEW) ---
+async def play_wii_melody_once():
+    """Play the Wii phrase exactly once, then release the buzzer."""
+    global _wii_playing
+    _wii_playing = True
+    for midi, beats in WII_MELODY:
+        dur = max(1, beats) * BEAT_SEC
+        if midi is None:
+            buzzer_pin.duty_u16(0)
+        else:
+            buzzer_pin.freq(int(midi_to_freq(midi)))
+            buzzer_pin.duty_u16(32768)  # 50% duty
+        await asyncio.sleep(dur)
+    buzzer_pin.duty_u16(0)     # ensure silence at the end
+    _wii_playing = False
+
+
 async def main():
     """Main execution loop."""
+    global _wii_playing, _wii_armed, _wii_task
 
-    # This loop runs the "default" behavior: playing sound based on light
+    # scale mapping range (tune to your room)
+    min_light = 2000
+    max_light = 40000
+
     while True:
         try:
             light_value = photo_sensor_pin.read_u16()
-            min_light = 2000
-            max_light = 40000
 
-            frequency = lux_to_freq(light_value, min_light, max_light)
-            print(f"Playing a note at {frequency}")
-            buzzer_pin.freq(int(frequency))
-            buzzer_pin.duty_u16(32768)
+            # start the melody ONCE
+            if _wii_armed and not _wii_playing and light_value >= BRIGHT_ON:
+                _wii_armed = False          # disarm until brightness falls
+                _wii_playing = True         # claim the buzzer immediately
+                buzzer_pin.duty_u16(0)      # hard mute any scale tone
+                print(f"[Wii] Triggered (ADC={light_value}) → one-shot melody")
+                _wii_task = asyncio.create_task(play_wii_melody_once())
 
-            await asyncio.sleep(0.1)  # let event loop breathe
+            # Re-arm ONLY after brightness drops below BRIGHT_OFF
+            if not _wii_armed and not _wii_playing and light_value <= BRIGHT_OFF:
+                _wii_armed = True
+                print(f"[Wii] Re-armed (ADC={light_value})")
+            # ------------------------------------------------------
+
+            # While the melody plays, DO NOT play the C-major scale
+            if not _wii_playing:
+                frequency = lux_to_freq(light_value, min_light, max_light)
+                buzzer_pin.freq(int(frequency))
+                buzzer_pin.duty_u16(32768)
+                # print(f"[Scale] ADC={light_value} -> {int(frequency)} Hz")
+
+            await asyncio.sleep(0.05)
 
         except KeyboardInterrupt:
             print("Stopping main loop...")
