@@ -1,7 +1,7 @@
-import ujson
+import json
 import os
 from typing import List, Dict, Tuple
-from storage.note_event import NoteEvent
+from .note_event import NoteEvent
 
 
 class PatternStore:
@@ -27,14 +27,14 @@ class PatternStore:
         }
 
         with open(file_path, "w") as f:
-            ujson.dump(data, f)
+            json.dump(data, f)
 
     def load(self, name: str) -> Tuple[Dict, List[NoteEvent]]:
         """Load a pattern from storage."""
 
         file_path = f"{self.base_path}/{name}.json"
         with open(file_path, "r") as f:
-            data = ujson.load(f)
+            data = json.load(f)
         metadata = data.get("metadata", {})
         events = [NoteEvent.from_dict(e) for e in data.get("events", [])]
 
