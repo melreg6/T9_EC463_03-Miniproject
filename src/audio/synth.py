@@ -20,7 +20,8 @@ def stop_tone():
     buzzer_pin.duty_u16(0)   # duty cycle = 0% (silent)
     buzzer_pin.deinit()      # release the PWM hardware
 
-# --- Wii-on-bright ---
+# --- Wii-on-bright (PEAK TRIGGER: one-shot) ---
+# Your sensor maxes around ~40000. Only trigger when we ENTER that top bin.
 TOP_PEAK_ADC = 40000       # observed max
 PEAK_MARGIN  = 120         # accept >= (max - margin) as "brightest"
 REARM_BELOW  = 32000       # must fall below this to re-arm
@@ -57,7 +58,6 @@ _wii_armed   = True    # re-armed after brightness falls below REARM_BELOW
 _wii_task    = None
 _was_topbin  = False   # rising-edge detector for the top bin
 
-
 C_MAJOR_MIDI = [
     48, 50, 52, 53, 55, 57, 59,   # C3..B3
     60, 62, 64, 65, 67, 69, 71,   # C4..B4
@@ -86,7 +86,7 @@ def lux_to_freq(x,theMin, theMax, use_log=True):
     midi_note = C_MAJOR_MIDI[idx]
     return midi_to_freq(midi_note)
 
-# --- Non-blocking Wii melody task (NEW) ---
+# --- Non-blocking Wii melody task (one-shot) ---
 async def play_wii_melody_once():
     """Play the Wii phrase exactly once, then release the buzzer."""
     global _wii_playing
@@ -102,10 +102,9 @@ async def play_wii_melody_once():
     buzzer_pin.duty_u16(0)     # ensure silence at the end
     _wii_playing = False
 
-
 async def main():
     """Main execution loop."""
-    global _wii_playing, _wii_armed, _wii_task
+    global _wii_playing, _wii_armed, _wii_task, _was_topbin
 
     # scale mapping range (tune to your room)
     min_light = 2000
